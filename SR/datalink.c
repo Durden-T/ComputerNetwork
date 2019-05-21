@@ -57,7 +57,7 @@ static void my_send_frame(unsigned char fk, unsigned char frame_nr, unsigned cha
 		dbg_frame("Send ACK %d\n", s.ack);
 		put_frame((unsigned char*)& s, 2);
 	}
-	else
+	else//NAK
 	{
 		no_nak = false;// one nak per frame, please
 		dbg_frame("Send NAK %d\n", s.ack);
