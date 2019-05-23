@@ -60,10 +60,18 @@ unsigned long ipToUL(const string& s)
 	return ans;
 }
 
-void buildPacketFoundInRelay(const string& domain, size_t size, char* inbuf, char* outbuf)
+void buildPacketFoundInRelay(const string& ip, size_t& size, char* buf)
 {
-	memcpy(outbuf, inbuf, size);
-	unsigned short code2 = inbuf[2];
+	/*for (int i = 0; i < size; i++)
+	{
+		if ((buf[i] & 0xf0) == 0x00)
+		{
+			cout << "0";
+		}
+		//输出十六进制数
+		cout << hex << int((buf[i]) & 0xff) << " ";
+	}
+	cout << endl;*/
 	//设置标志域1000 0001 1000 0000/0101
 				   //QR = QueryResponse = 1,表示响应
 				   //OPCODE = 0,表示标准查询
@@ -73,58 +81,50 @@ void buildPacketFoundInRelay(const string& domain, size_t size, char* inbuf, cha
 				   //RA = RecursionAvailable = 1，表示可以得到递归响应
 				   //Z = Zero = 0，保留字段
 				   //RCODE = 0，无差错（本地列表服务）
-				   //RCODE = 5，有差错（本地列表屏蔽）
-	if (domain == BLOCKED)
+				   //RCODE = 3，有差错（本地列表屏蔽）
+	* (unsigned short*)& buf[2] = htons(0x8180);
+	if (ip == BLOCKED)
 	{
-		code2 = htons(0x8185);
+		*(unsigned short*)& buf[6] = htons(0x0000);
+		return;
 	}
-	else
-	{
-		code2 = htons(0x8180);
-	}
-	memcpy(&outbuf[2], &code2, 2);
 
-	if (domain == BLOCKED)
-	{
-		code2 = htons(0x0000);
-	}
-	else
-	{
-		code2 = htons(0x0001);
-	}
-	memcpy(&outbuf[6], &code2, 2);
-
-	int RRStart = size;
-
+	*(unsigned short*)& buf[6] = htons(0x0001);
 	//name：0xc00c   1100 0000 0000 1100 开头11标志为指针 后为偏移量
-	code2 = htons(0xc00c);
-	memcpy(&outbuf[RRStart], &code2, 2);
-	RRStart += 2;
-
-	//type:RR的类型码 1 IPV4
-	code2 = htons(0x0001);
-	memcpy(&outbuf[RRStart], &code2, 2);
-	RRStart += 2;
-
+	*(unsigned short*)& buf[size] = htons(0xc00c);
+	size += 2;
+	*(unsigned short*)& buf[size] = htons(0x0001);
+	size += 2;
 	//class:通常为IN(1)，指Internet数据  1 in
-	code2 = htons(0x0001);
-	memcpy(&outbuf[RRStart], &code2, 2);
-	RRStart += 2;
+	*(unsigned short*)& buf[size] = htons(0x0001);
+	size += 2;
 	//ttl:客户程序保留该资源记录的秒数  设为10min 即600s 
-	unsigned long code4;
-	code4 = htonl(0x00000258);
-	memcpy(&outbuf[RRStart], &code4, 4);
-	RRStart += 4;
 
+	*(unsigned long*)& buf[size] = htonl(0x00000228);
+	size += 4;
 	//relength:说明资源数据的字节数，对类型1（TYPE A记录）资源数据是4字节的IP地址 
-	code2 = htons(0x0004);
-	memcpy(&outbuf[RRStart], &code2, 2);
-	RRStart += 2;
+	*(unsigned short*)& buf[size] = htons(0x0004);
+	size += 2;
 	//rdata:资源数据 ipv4地址
-	//code4 = ipToUL(domain);
-	//code4 = boost::asio::ip::address_v4::from_string(domain).to_ulong();
-	code4 = inet_addr(domain.c_str());
-	memcpy(&outbuf[RRStart], &code4, 4);
-	RRStart += 4;
+//code4 = ipToUL(ip);
+//code4 = boost::asio::ip::address_v4::from_string(ip).to_ulong();
+	inet_pton(AF_INET, ip.c_str(), (unsigned long*)& buf[size]);
+	size += 4;
+
+
+	/*for (int i = 0; i < size; i++)
+	{
+		if ((buf[i] & 0xf0) == 0x00)
+		{
+			cout << "0";
+		}
+		//输出十六进制数
+		cout << hex << int((buf[i]) & 0xff) << " ";
+	}
+	cout << endl;*/
 }
 #endif
+
+
+
+
