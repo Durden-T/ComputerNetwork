@@ -3,4 +3,4 @@
 10.3.8.211 www.fuck.com
 14.215.177.38 www.baidu.com
 0.0.0.0 www.google.com
-0.0.0.0 a.com
+14.215.177.38 www.a.com

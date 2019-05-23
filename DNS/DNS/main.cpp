@@ -1,159 +1,193 @@
+#pragma comment(lib,"Ws2_32.lib")
+
+
+#include <winsock2.h>
+#include <windows.h>
 #include"common.h"
 #include"tools.h"
-#include<queue>
 
 
-void handleIDTList(deque<IDTransferNode>& idtlist, int& idtlist_base)
+
+struct DatagramInfo
 {
-	//如果队列已满
-	if (idtlist.size() == IDT_MAX_SIZE)
-	{
-		//丢弃前半部分的请求
-		for (int i = 0; i < IDT_HALF_SIZE; i++)
-		{
-			idtlist.pop_front();
-		}
-		//调整队列的起始下标为500
-		if (idtlist_base == 0)
-		{
-			idtlist_base = IDT_HALF_SIZE;
-		}
-		else
-		{
-			idtlist_base = 0;
-		}
-	}
-}
+	unsigned short oldID;
+	SOCKADDR_IN user;
+	bool valid;
+};
 
-int pos2id(deque<IDTransferNode> idtlist,
-	int idtlist_base)
-{
-	return ((idtlist.size() + idtlist_base) % IDT_MAX_SIZE);
-}
 
-int id2pos(int x, int idtlist_base)
-{
-	return((x + idtlist_base) % IDT_MAX_SIZE);
-}
 
 int main(int argc, char** argv)
 {
 	string outerDNS = DEFAULT_DNS;
 	int debugLevel = 0;
+	//由文件读入的域名-ip表
 	unordered_map<string, string> table;
-
 	if (!handleParameter(argc, argv, outerDNS, debugLevel, table))
 	{
-		cerr << "命令行参数错误。" << endl;
+		cerr << "Parameter error." << endl;
 		return -1;
 	}
 
-	io_service service;
-	ip::udp::socket sock(service, ip::udp::endpoint(ip::udp::v4(), PORT));
-	ip::udp::endpoint ep(ip::address_v4::from_string(outerDNS), PORT);
-	ip::udp::endpoint sender_ep;
-	char inbuf[BUF_SIZE], outbuf[BUF_SIZE];
-	memset(inbuf, 0, BUF_SIZE);
-	memset(outbuf, 0, BUF_SIZE);
-	deque<IDTransferNode> idtList;
-	//记录一个请求的节点
-	IDTransferNode idtNode;
-	//初始时队列基准为0，然后超过1000时变为500
-	int idtListBase = 0;
 
-	/*queue<unsigned short> unused;
-	for (unsigned short i = 0; i <= USHRT_MAX; ++i)
+
+	WSADATA wsaData;
+	if (WSAStartup(MAKEWORD(2, 2), &wsaData))
+	{
+		cerr << "Failed to init socket." << endl;
+		return -2;
+	}
+	SOCKET sock;
+	if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+	{
+		cerr << "Failed to create socket." << endl;
+		return -3;
+	}
+
+	SOCKADDR_IN local;
+	local.sin_family = AF_INET;
+	local.sin_port = htons(PORT);
+	local.sin_addr.s_addr = htonl(INADDR_ANY);
+
+	if (bind(sock, (SOCKADDR*)& local, sizeof(local)))
+	{
+		cerr << "Failed to bind socket." << endl;
+		return -4;
+	}
+
+	//服务器地址
+	SOCKADDR_IN server;
+	server.sin_family = AF_INET;
+	server.sin_port = htons(PORT);
+	server.sin_addr.s_addr = inet_addr(outerDNS.c_str());
+
+	//用户地址
+	SOCKADDR_IN user;
+	int userLen = sizeof(user);
+
+	char buf[BUF_SIZE];
+	memset(buf, 0, BUF_SIZE);
+	//临时包
+	DatagramInfo tmp;
+
+	//可用ID
+	queue<unsigned short> unused;
+	for (int i = 0; i <= USHRT_MAX; ++i)
 		unused.push(i);
-	//unordered_map<unsigned short, pair<unsigned short, ip::udp::endpoint> > id;
-	unordered_map<unsigned short, tuple<unsigned short, ip::udp::endpoint,bool> > id;*/
+	//新ID与包的信息的hash表
+	unordered_map<unsigned short, DatagramInfo > idTable;
 
 	while (true)
 	{
-		size_t size = sock.receive_from(buffer(inbuf), sender_ep);
-		bool qr = inbuf[2] >> 7;
-		if (qr == 0)//查询报
+		//收包
+		size_t size = recvfrom(sock, buf, BUF_SIZE, 0, (SOCKADDR*)& user, &userLen);
+		if (size == 0 || size == SOCKET_ERROR)
 		{
-			unordered_map<string, string>::iterator it;
-			
-			string domain = getDomain(inbuf, size);
-			if ((it = table.find(domain)) != table.end())//在relay中找到
+			cerr << "Receiving error." << endl;
+			continue;
+		}
+
+		if (debugLevel > 0)
+		{
+			cout << "Received, id:";
+			unsigned short t = *(unsigned short*)& buf;
+			cout << t << endl;
+			if (debugLevel == 2)
 			{
-				buildPacketFoundInRelay(table[domain], size, inbuf);
-				memcpy(outbuf, inbuf, size);
-				sock.send_to(buffer(outbuf), sender_ep);
-			}
-			else
-			{
-				unsigned short* oldID = (unsigned short*)malloc(sizeof(unsigned short));
-				memcpy(oldID, inbuf, 2);
-				//保证队列不为满
-				handleIDTList(idtList, idtListBase);
-
-				//为确保中继DNS的id具有唯一性
-				int newIDint = pos2id(idtList, idtListBase);
-				unsigned short newID = htons((unsigned short)(newIDint));
-
-				//变更中继DNS包的id，使之newID唯一,并记录oldID,cname
-				idtNode.oldID = ntohs(*oldID);
-				idtNode.ep = sender_ep;
-				idtNode.processed = false;
-				idtList.push_back(idtNode);
-
-				memcpy(inbuf, &newID, 2);
-
-				sock.send_to(buffer(inbuf), ep);
-				free(oldID);
-				/*	string send(inbuf, size);
-					sock.send_to(buffer(send), ep);
-					int newsize = sock.receive_from(buffer(inbuf), ep);
-					send = string(inbuf, newsize);
-					sock.send_to(buffer(send), sender_ep);
-					if (unused.empty())
-						continue;
-					unsigned short oldId;
-					memcpy(&oldId, inbuf, 2);
-					unsigned short newId = unused.front();
-					unused.pop();
-					id[newId] = make_tuple(oldId, sender_ep,true);
-					memcpy(inbuf, &newId, 2);
-					sock.send_to(buffer(inbuf), ep);*/
+				cout << "    contents:\n   ";
+				show_bytes((unsigned char*)buf, size);
+				cout << endl;
 			}
 		}
-		else
+
+		bool qr = buf[2] >> 7;
+		//查询报
+		if (qr == 0)
 		{
-			unsigned short* newID = (unsigned short*)malloc(sizeof(unsigned short));
+			if (debugLevel > 0)
+				cout << "    Query datagram" << endl;
 
-			//从buffer获取新ID
-			memcpy(newID, inbuf, 2);
+			unordered_map<string, string>::iterator it;
+			//获得域名
+			string domain = getDomain(buf, size);
+			//在relay中存在
+			if ((it = table.find(domain)) != table.end())
+			{
+				if (debugLevel > 0)
+					cout << "    Found in relay. Domain:" << domain << "\tip:" << table[domain] << endl;
+				//构建响应包
+				buildDatagramFoundInRelay(table[domain], size, buf);
+				sendto(sock, buf, size, 0, (SOCKADDR*)& user, userLen);
+			}
+			//向外界服务器查询
+			else
+			{
+				if (unused.empty())
+				{
+					cerr << "No available ID." << endl;
+					continue;
+				}
+				unsigned short oldID = *(unsigned short*)& buf;
+				//从unused中获得一个新ID
+				unsigned short newID = unused.front();
+				//移除此ID
+				unused.pop();
 
-			//将新ID转成int型，ntohs = net to host short，网络顺序转成主机顺序
-			int a = (int)ntohs(*newID);
-			free(newID);
+				if (debugLevel > 0)
+				{
+					cout << "    Not found in relay" << endl;
+					if (debugLevel == 2)
+						cout << "    " << unused.size() << " ids are unused, new id:" << newID << endl;
+				}
 
-			//获取新ID对应的旧ID的下标
-			int pos = id2pos(a, idtListBase);
+				//转换成unsigned short
+				tmp.oldID = ntohs(oldID);
+				//记录用户地址
+				tmp.user = user;
+				//lasy erase
+				tmp.valid = true;
+				//插入到hash表中
+				idTable.emplace(newID, tmp);
+				//将id设为新id
+				newID = htons(newID);
+				*(unsigned short*)& buf = newID;
+				sendto(sock, buf, size, 0, (SOCKADDR*)& server, sizeof(server));
+			}
+		}
+		//响应报
+		else if (qr == 1)
+		{
 
-			//若当该query已处理，则直接跳过
-			if (idtList[pos].processed) continue;
-
-			//若当该query未处理，获取旧ID，htons = host to net short，主机顺序转成网络顺序
-			unsigned short oldID = htons(idtList[pos].oldID);
-
-			//构造响应报文头ID，准备发送回客户端
-			memcpy(inbuf, &oldID, 2);
-
-			//标记为已处理
-			idtList[pos].processed = true;
-			sock.send_to(buffer(inbuf), idtList[pos].ep);
-			/*unsigned short newId;
-			memcpy(&newId, inbuf, 2);
-			auto& it = id[newId];
-			if (!get<2>(it))
+			unsigned short newID = *(unsigned short*)& buf;
+			newID = ntohs(newID);
+			//获取对应包的信息
+			auto& it = idTable[newID];
+			//无效跳过
+			if (!it.valid)
 				continue;
-			memcpy(inbuf, &get<0>(it), 2);
-			sock.send_to(buffer(inbuf), get<1>(it));
-			get<2>(it) = false;
-			unused.push(newId);*/
+
+			if (debugLevel > 0)
+			{
+				cout << "    Response datagram" << endl;
+				if (debugLevel == 2)
+					cout << "    new id:" << newID << ",old id:" << it.oldID << endl;
+			}
+
+			//设置为旧id
+			*(unsigned short*)& buf = htons(it.oldID);
+			sendto(sock, buf, size, 0, (SOCKADDR*)& it.user, sizeof(it.user));
+
+			//设为可用状态
+			it.valid = true;
+			//放回unused
+			unused.push(newID);
+		}
+
+		if (debugLevel == 2)
+		{
+			cout << "    contents:\n   ";
+			show_bytes((unsigned char*)buf, size);
+			cout << endl;
 		}
 	}
 }
