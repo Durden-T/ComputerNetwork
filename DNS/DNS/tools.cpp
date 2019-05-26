@@ -1,5 +1,3 @@
-#include <winsock2.h>
-#include <windows.h>
 #include"common.h"
 #include"tools.h"
 
@@ -62,7 +60,7 @@ bool handleParameter(int argc, char** argv, string& outerDNS, int& debugLevel, u
 	return true;
 }
 
-string getDomain(const char* buf, size_t size)
+string getDomainAndQtype(const char* buf, size_t size, unsigned short& qtype)
 {
 	//域名格式为3www6google3com0
 	string ans;
@@ -84,11 +82,11 @@ string getDomain(const char* buf, size_t size)
 				ans += '.';
 		}
 	}
-
+	qtype = ntohs(*(unsigned short*)& buf[++i]);
 	return ans;
 }
 
-void buildDatagramFoundInRelay(const string& ip, size_t& size, char* buf)
+void buildDatagram(const string& ip, char* buf, size_t& size)
 {
 	//header：(通过抓包和阅读协议得到)
 	//qr=1,opcode=0,aa=0,tc=0,rd=1,ra=1,z=0,rcode=0/3(正常响应/发生错误)

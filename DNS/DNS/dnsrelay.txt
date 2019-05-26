@@ -1,6 +1,2 @@
-0.0.0.0 www.qq.com
-0.0.0.0 www.sohu.com
-10.3.8.211 www.fuck.com
-14.215.177.38 www.baidu.com
-0.0.0.0 www.google.com
-14.215.177.38 www.a.com
+0.0.0.0 www.a.com
+14.215.177.38 www.b.com

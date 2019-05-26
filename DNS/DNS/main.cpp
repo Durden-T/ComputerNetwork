@@ -1,25 +1,11 @@
-#pragma comment(lib,"Ws2_32.lib")
-
-
-#include <winsock2.h>
-#include <windows.h>
 #include"common.h"
 #include"tools.h"
 
 
 
-struct DatagramInfo
-{
-	unsigned short oldID;
-	SOCKADDR_IN user;
-	bool valid;
-};
-
-
-
 int main(int argc, char** argv)
 {
-	string outerDNS = DEFAULT_DNS;
+	string outerDNS(DEFAULT_DNS);
 	int debugLevel = 0;
 	//由文件读入的域名-ip表
 	unordered_map<string, string> table;
@@ -29,14 +15,13 @@ int main(int argc, char** argv)
 		return -1;
 	}
 
-
-
 	WSADATA wsaData;
 	if (WSAStartup(MAKEWORD(2, 2), &wsaData))
 	{
 		cerr << "Failed to init socket." << endl;
 		return -2;
 	}
+
 	SOCKET sock;
 	if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
 	{
@@ -46,10 +31,9 @@ int main(int argc, char** argv)
 
 	SOCKADDR_IN local;
 	local.sin_family = AF_INET;
-	local.sin_port = htons(PORT);
+	local.sin_port = htons(DEFAULT_PORT);
 	local.sin_addr.s_addr = htonl(INADDR_ANY);
-
-	if (bind(sock, (SOCKADDR*)& local, sizeof(local)))
+	if (bind(sock, (SOCKADDR*)& local, sizeof local))
 	{
 		cerr << "Failed to bind socket." << endl;
 		return -4;
@@ -58,24 +42,22 @@ int main(int argc, char** argv)
 	//服务器地址
 	SOCKADDR_IN server;
 	server.sin_family = AF_INET;
-	server.sin_port = htons(PORT);
+	server.sin_port = htons(DEFAULT_PORT);
 	server.sin_addr.s_addr = inet_addr(outerDNS.c_str());
 
 	//用户地址
 	SOCKADDR_IN user;
-	int userLen = sizeof(user);
+	int userLen = sizeof user;
 
 	char buf[BUF_SIZE];
-	memset(buf, 0, BUF_SIZE);
-	//临时包
-	DatagramInfo tmp;
 
-	//可用ID
-	queue<unsigned short> unused;
-	for (int i = 0; i <= USHRT_MAX; ++i)
-		unused.push(i);
-	//新ID与包的信息的hash表
-	unordered_map<unsigned short, DatagramInfo > idTable;
+	/*
+	id池,count为分配的新id,每次count+1,只有当id池满时（65535）才有可能发生冲突,
+	采取的策略是直接覆盖,由客户机判断超时,减少服务器压力,对于小规模的客户群完全够用
+	*/
+	vector<pair<unsigned short, SOCKADDR_IN>> idPool(USHRT_MAX);
+	//类型为unsigned short,当达到最大id65535时,再增加自动变为0
+	unsigned short count = 0;
 
 	while (true)
 	{
@@ -108,79 +90,61 @@ int main(int argc, char** argv)
 				cout << "    Query datagram" << endl;
 
 			unordered_map<string, string>::iterator it;
+			unsigned short qtype;
 			//获得域名
-			string domain = getDomain(buf, size);
-			//在relay中存在
-			if ((it = table.find(domain)) != table.end())
+			string domain = getDomainAndQtype(buf, size, qtype);
+			//ipv4且在relay中存在
+			if (qtype == 1 && (it = table.find(domain)) != table.end())
 			{
 				if (debugLevel > 0)
 					cout << "    Found in relay. Domain:" << domain << "\tip:" << table[domain] << endl;
 				//构建响应包
-				buildDatagramFoundInRelay(table[domain], size, buf);
+				buildDatagram(table[domain], buf, size);
 				sendto(sock, buf, size, 0, (SOCKADDR*)& user, userLen);
 			}
 			//向外界服务器查询
 			else
 			{
-				if (unused.empty())
-				{
-					cerr << "No available ID." << endl;
-					continue;
-				}
 				unsigned short oldID = *(unsigned short*)& buf;
-				//从unused中获得一个新ID
-				unsigned short newID = unused.front();
-				//移除此ID
-				unused.pop();
+				//分配新的id
+				unsigned short newID = count++;
 
 				if (debugLevel > 0)
 				{
 					cout << "    Not found in relay" << endl;
 					if (debugLevel == 2)
-						cout << "    " << unused.size() << " ids are unused, new id:" << newID << endl;
+						cout << "    new id:" << newID << endl;
 				}
 
-				//转换成unsigned short
-				tmp.oldID = ntohs(oldID);
+				auto& it = idPool[newID];
+				//转换小端字节序
+				it.first = ntohs(oldID);
 				//记录用户地址
-				tmp.user = user;
-				//lasy erase
-				tmp.valid = true;
-				//插入到hash表中
-				idTable.emplace(newID, tmp);
-				//将id设为新id
-				newID = htons(newID);
-				*(unsigned short*)& buf = newID;
-				sendto(sock, buf, size, 0, (SOCKADDR*)& server, sizeof(server));
+				it.second = user;
+
+				*(unsigned short*)& buf = htons(newID);
+				sendto(sock, buf, size, 0, (SOCKADDR*)& server, sizeof server);
 			}
 		}
 		//响应报
 		else if (qr == 1)
 		{
-
 			unsigned short newID = *(unsigned short*)& buf;
+			//转换小端字节序
 			newID = ntohs(newID);
-			//获取对应包的信息
-			auto& it = idTable[newID];
-			//无效跳过
-			if (!it.valid)
-				continue;
+			//获取对应报的信息
+			auto& it = idPool[newID];
 
 			if (debugLevel > 0)
 			{
 				cout << "    Response datagram" << endl;
 				if (debugLevel == 2)
-					cout << "    new id:" << newID << ",old id:" << it.oldID << endl;
+					cout << "    new id:" << newID << ",old id:" << it.first << endl;
 			}
 
 			//设置为旧id
-			*(unsigned short*)& buf = htons(it.oldID);
-			sendto(sock, buf, size, 0, (SOCKADDR*)& it.user, sizeof(it.user));
-
-			//设为可用状态
-			it.valid = true;
-			//放回unused
-			unused.push(newID);
+			*(unsigned short*)& buf = htons(it.first);
+			sendto(sock, buf, size, 0, (SOCKADDR*)& it.second, sizeof it.second);
 		}
 
 		if (debugLevel == 2)
