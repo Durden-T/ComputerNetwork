@@ -1,7 +1,7 @@
 #include"common.h"
 #include"tools.h"
 
-
+#include <iomanip>
 
 bool handleParameter(int argc, char** argv, string& outerDNS, int& debugLevel, unordered_map<string, string>& table)
 {
@@ -135,5 +135,8 @@ void buildDatagram(const string& ip, char* buf, size_t& size)
 void show_bytes(unsigned char* start, size_t len)
 {
 	for (int i = 0; i < len; i++)
-		printf(" %.2x", start[i]);
+	{
+		//控制格式化  50个字符自动换行
+		printf((i % 50 ? " %.2x" : "\n    %.2x"), start[i]);
+	}
 }

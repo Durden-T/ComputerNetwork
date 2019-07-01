@@ -9,13 +9,16 @@ int main(int argc, char** argv)
 	int debugLevel = 0;
 	//由文件读入的域名-ip表
 	unordered_map<string, string> table;
+	//处理参数
 	if (!handleParameter(argc, argv, outerDNS, debugLevel, table))
 	{
+		//参数出错
 		cerr << "Parameter error." << endl;
 		return -1;
 	}
 
 	WSADATA wsaData;
+	//WSA初始化失败
 	if (WSAStartup(MAKEWORD(2, 2), &wsaData))
 	{
 		cerr << "Failed to init socket." << endl;
@@ -23,16 +26,20 @@ int main(int argc, char** argv)
 	}
 
 	SOCKET sock;
+	//创建socket失败
 	if ((sock = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
 	{
 		cerr << "Failed to create socket." << endl;
 		return -3;
 	}
 
+	//创建本地socket地址
 	SOCKADDR_IN local;
 	local.sin_family = AF_INET;
 	local.sin_port = htons(DEFAULT_PORT);
 	local.sin_addr.s_addr = htonl(INADDR_ANY);
+	//地址与socket绑定失败
+
 	if (bind(sock, (SOCKADDR*)& local, sizeof local))
 	{
 		cerr << "Failed to bind socket." << endl;
@@ -49,6 +56,7 @@ int main(int argc, char** argv)
 	SOCKADDR_IN user;
 	int userLen = sizeof user;
 
+	//缓冲区
 	char buf[BUF_SIZE];
 
 	/*
@@ -64,10 +72,7 @@ int main(int argc, char** argv)
 		//收包
 		size_t size = recvfrom(sock, buf, BUF_SIZE, 0, (SOCKADDR*)& user, &userLen);
 		if (size == 0 || size == SOCKET_ERROR)
-		{
-			cerr << "Receiving error." << endl;
 			continue;
-		}
 
 		if (debugLevel > 0)
 		{
@@ -76,7 +81,7 @@ int main(int argc, char** argv)
 			cout << t << endl;
 			if (debugLevel == 2)
 			{
-				cout << "    contents:\n   ";
+				cout << "    contents:";
 				show_bytes((unsigned char*)buf, size);
 				cout << endl;
 			}
@@ -149,7 +154,7 @@ int main(int argc, char** argv)
 
 		if (debugLevel == 2)
 		{
-			cout << "    contents:\n   ";
+			cout << "    contents:";
 			show_bytes((unsigned char*)buf, size);
 			cout << endl;
 		}
